@@ -1,3 +1,4 @@
+import API_BASE from "../api";
 import { useState, useEffect } from 'react';
 
 const POSTER_BASE = 'https://image.tmdb.org/t/p/w92';
@@ -16,7 +17,7 @@ export default function Downloads() {
 
   const fetchDownloads = async () => {
     try {
-      const res = await fetch('/api/downloads');
+      const res = await fetch(API_BASE + '/api/downloads');
       const data = await res.json();
       setDownloads(Array.isArray(data) ? data : []);
     } catch (err) {
@@ -34,7 +35,7 @@ export default function Downloads() {
   }, []);
 
   const handleRemove = async (id) => {
-    await fetch(`/api/downloads/${id}`, { method: 'DELETE' });
+    await fetch(`${API_BASE}/api/downloads/${id}`, { method: 'DELETE' });
     setDownloads(prev => prev.filter(d => d.id !== id));
   };
 
@@ -46,14 +47,14 @@ export default function Downloads() {
 
   if (loading) {
     return (
-      <div style={{ padding: '100px 40px', textAlign: 'center', color: '#b3b3b3' }}>
+      <div className='page-pad' style={{ textAlign: 'center', color: '#b3b3b3' }}>
         Loading downloads...
       </div>
     );
   }
 
   return (
-    <div style={{ padding: '90px 40px 60px', maxWidth: '1100px', margin: '0 auto' }}>
+    <div className='page-pad' style={{ maxWidth: '1100px', margin: '0 auto' }}>
       <h1 style={{ fontSize: '28px', fontWeight: '700', marginBottom: '8px' }}>Downloads</h1>
       <p style={{ color: '#b3b3b3', marginBottom: '40px' }}>
         {active.length} downloading · {transferring.length} transferring · {queued.length} queued · {completed.length} completed

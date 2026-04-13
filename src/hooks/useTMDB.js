@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
 
-const BASE_URL = '/api/tmdb'
+import API_BASE from '../api';
+const BASE_URL = API_BASE + '/api/tmdb'
 const IMG_BASE = 'https://image.tmdb.org/t/p'
 
 export const getPosterUrl = (path, size = 'w342') =>

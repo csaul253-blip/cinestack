@@ -1,56 +1,135 @@
+import API_BASE from "../api";
 import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
 
 export default function Settings() {
   const { token } = useAuth()
   const [saved, setSaved] = useState(false)
+  const [scanStatus, setScanStatus] = useState(null) // null | 'scanning' | 'done' | 'error'
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState({
-    torrentUrl: '',
-    torrentApiKey: '',
-    radarrUrl: '',
-    radarrApiKey: '',
-    sonarrUrl: '',
-    sonarrApiKey: '',
-    prowlarrUrl: '',
-    prowlarrApiKey: '',
-    storagePath: '',
+    prowlarr_url: '',
+    prowlarr_api_key: '',
+    download_agent_url: '',
+    download_agent_username: '',
+    download_agent_password: '',
+    jellyfin_url: 'http://192.168.50.254:8097',
+    jellyfin_api_key: '',
     transcoding: 'direct',
     theme: 'dark',
   })
-const [seedbox, setSeedbox] = useState({
-    enabled:    false,
-    host:       '',
-    port:       '22',
-    username:   '',
-    password:   '',
-    remotePath: '',
-    localPath:  '/mnt/media',
-  })
-  const [seedboxSaving,    setSeedboxSaving]    = useState(false)
-  const [seedboxSaved,     setSeedboxSaved]     = useState(false)
-  const [seedboxTesting,   setSeedboxTesting]   = useState(false)
-  const [seedboxTestResult,setSeedboxTestResult]= useState(null)
+  const [mediaPaths, setMediaPaths] = useState([{ value: '', status: null, error: '' }])
+  const [pathsValidating, setPathsValidating] = useState(false)
+  const [pathsSaving, setPathsSaving] = useState(false)
+  const [pathsSaved, setPathsSaved] = useState(false)
+  const [proKey, setProKey] = useState('')
+  const [proActivating, setProActivating] = useState(false)
+  const [proError, setProError] = useState('')
+  const [proActivated, setProActivated] = useState(false)
+  const [quality, setQuality] = useState('auto')
+  const [qualitySaved, setQualitySaved] = useState(false)
+  const [pushEnabled, setPushEnabled] = useState(false)
+  const [pushLoading, setPushLoading] = useState(false)
+
+  function updateMediaPath(i, val) {
+    setMediaPaths(prev => prev.map((p, idx) => idx === i ? { value: val, status: null, error: '' } : p))
+  }
+  function addMediaPath() {
+    setMediaPaths(prev => [...prev, { value: '', status: null, error: '' }])
+  }
+  function removeMediaPath(i) {
+    setMediaPaths(prev => prev.filter((_, idx) => idx !== i))
+  }
+  async function validateMediaPaths() {
+    const filled = mediaPaths.filter(p => p.value.trim())
+    if (!filled.length) return
+    setPathsValidating(true)
+    try {
+      const res = await fetch(API_BASE + '/api/setup/validate-path', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths: filled.map(p => p.value.trim()) }),
+      })
+      const data = await res.json()
+      const resultMap = {}
+      data.results.forEach(r => { resultMap[r.path] = r })
+      setMediaPaths(prev => prev.map(p => {
+        const r = resultMap[p.value.trim()]
+        if (!r) return p
+        return { ...p, status: r.valid ? 'ok' : 'err', error: r.error || '' }
+      }))
+    } catch {}
+    setPathsValidating(false)
+  }
+  async function saveMediaPaths() {
+    setPathsSaving(true)
+    const validPaths = mediaPaths.filter(p => p.status === 'ok').map(p => p.value.trim())
+    await fetch(API_BASE + '/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ media_paths: validPaths }),
+    })
+    setPathsSaving(false)
+    setPathsSaved(true)
+    setTimeout(() => setPathsSaved(false), 3000)
+  }
 
   useEffect(() => {
-    fetch('/api/settings', {
+    fetch(API_BASE + '/api/settings', {
       headers: { 'Authorization': `Bearer ${token}` }
     })
       .then(r => r.json())
       .then(data => {
         setForm(prev => ({ ...prev, ...data }))
         if (data.theme) applyTheme(data.theme)
+        if (data.media_paths) {
+          const paths = Array.isArray(data.media_paths) ? data.media_paths : JSON.parse(data.media_paths)
+          setMediaPaths(paths.map(v => ({ value: v, status: null, error: '' })))
+        }
       })
       .catch(() => {})
       .finally(() => setLoading(false))
 
-      fetch('/api/settings/seedbox', {
-      headers: { 'Authorization': `Bearer ${token}` }
-    })
-      .then(r => r.json())
-      .then(data => setSeedbox(data))
-      .catch(() => {})
   }, [])
+
+  const handlePushToggle = async () => {
+    if (pushLoading) return
+    setPushLoading(true)
+    try {
+      if (!pushEnabled) {
+        const permission = await Notification.requestPermission()
+        if (permission !== 'granted') { setPushLoading(false); return }
+        const reg = await navigator.serviceWorker.ready
+        const keyRes = await fetch(API_BASE + '/api/push/vapid-public-key', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        })
+        const { publicKey } = await keyRes.json()
+        const sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: publicKey,
+        })
+        const subJson = sub.toJSON()
+        await fetch(API_BASE + '/api/push/subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ endpoint: subJson.endpoint, keys: subJson.keys }),
+        })
+        setPushEnabled(true)
+      } else {
+        await fetch(API_BASE + '/api/push/unsubscribe', {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` },
+        })
+        const reg = await navigator.serviceWorker.ready
+        const sub = await reg.pushManager.getSubscription()
+        if (sub) await sub.unsubscribe()
+        setPushEnabled(false)
+      }
+    } catch (err) {
+      console.error('Push toggle error:', err)
+    }
+    setPushLoading(false)
+  }
 
   const applyTheme = (theme) => {
     document.documentElement.setAttribute('data-theme', theme)
@@ -64,7 +143,7 @@ const [seedbox, setSeedbox] = useState({
 
   const handleSave = async () => {
     try {
-      await fetch('/api/settings', {
+      await fetch(API_BASE + '/api/settings', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -78,6 +157,42 @@ const [seedbox, setSeedbox] = useState({
     } catch (err) {
       console.error('Failed to save settings:', err)
     }
+  }
+
+  const handleActivatePro = async () => {
+    setProError('')
+    if (!proKey.trim()) { setProError('Enter a license key'); return }
+    setProActivating(true)
+    try {
+      await fetch(API_BASE + '/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ pro_enabled: true, pro_license_key: proKey.trim() }),
+      })
+      setForm(p => ({ ...p, pro_enabled: true }))
+      setProActivated(true)
+      setTimeout(() => setProActivated(false), 4000)
+    } catch { setProError('Failed to activate') }
+    setProActivating(false)
+  }
+
+  const handleScan = async () => {
+    setScanStatus('scanning')
+    try {
+      const res = await fetch(API_BASE + '/api/media/scan', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setScanStatus('done')
+      } else {
+        setScanStatus('error')
+      }
+    } catch {
+      setScanStatus('error')
+    }
+    setTimeout(() => setScanStatus(null), 4000)
   }
 
   const inputStyle = {
@@ -156,75 +271,18 @@ const [seedbox, setSeedbox] = useState({
 
         <div style={cardStyle}>
           <div style={{ marginBottom: '20px' }}>
-            <div style={{ fontWeight: '700', fontSize: '1rem', marginBottom: '4px' }}>Torrent Provider</div>
-            <div style={{ color: '#b3b3b3', fontSize: '0.85rem' }}>qBittorrent, Transmission, Deluge, etc.</div>
-          </div>
-          <div style={rowStyle}>
-            <div>
-              <label style={labelStyle}>Client URL</label>
-              <input name="torrentUrl" value={form.torrentUrl} onChange={handleChange}
-                placeholder="http://localhost:8080" style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>API Key</label>
-              <input name="torrentApiKey" value={form.torrentApiKey} onChange={handleChange}
-                placeholder="••••••••••••" type="password" style={inputStyle} />
-            </div>
-          </div>
-        </div>
-
-        <div style={cardStyle}>
-          <div style={{ marginBottom: '20px' }}>
-            <div style={{ fontWeight: '700', fontSize: '1rem', marginBottom: '4px' }}>Radarr</div>
-            <div style={{ color: '#b3b3b3', fontSize: '0.85rem' }}>Movie collection manager.</div>
-          </div>
-          <div style={rowStyle}>
-            <div>
-              <label style={labelStyle}>Radarr URL</label>
-              <input name="radarrUrl" value={form.radarrUrl} onChange={handleChange}
-                placeholder="http://localhost:7878" style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>API Key</label>
-              <input name="radarrApiKey" value={form.radarrApiKey} onChange={handleChange}
-                placeholder="••••••••••••" type="password" style={inputStyle} />
-            </div>
-          </div>
-        </div>
-
-        <div style={cardStyle}>
-          <div style={{ marginBottom: '20px' }}>
-            <div style={{ fontWeight: '700', fontSize: '1rem', marginBottom: '4px' }}>Sonarr</div>
-            <div style={{ color: '#b3b3b3', fontSize: '0.85rem' }}>TV series collection manager.</div>
-          </div>
-          <div style={rowStyle}>
-            <div>
-              <label style={labelStyle}>Sonarr URL</label>
-              <input name="sonarrUrl" value={form.sonarrUrl} onChange={handleChange}
-                placeholder="http://localhost:8989" style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>API Key</label>
-              <input name="sonarrApiKey" value={form.sonarrApiKey} onChange={handleChange}
-                placeholder="••••••••••••" type="password" style={inputStyle} />
-            </div>
-          </div>
-        </div>
-
-        <div style={cardStyle}>
-          <div style={{ marginBottom: '20px' }}>
             <div style={{ fontWeight: '700', fontSize: '1rem', marginBottom: '4px' }}>Prowlarr</div>
-            <div style={{ color: '#b3b3b3', fontSize: '0.85rem' }}>Indexer manager for Radarr and Sonarr.</div>
+            <div style={{ color: '#b3b3b3', fontSize: '0.85rem' }}>Indexer — powers search in the Requests tab.</div>
           </div>
           <div style={rowStyle}>
             <div>
               <label style={labelStyle}>Prowlarr URL</label>
-              <input name="prowlarrUrl" value={form.prowlarrUrl} onChange={handleChange}
+              <input name="prowlarr_url" value={form.prowlarr_url} onChange={handleChange}
                 placeholder="http://localhost:9696" style={inputStyle} />
             </div>
             <div>
               <label style={labelStyle}>API Key</label>
-              <input name="prowlarrApiKey" value={form.prowlarrApiKey} onChange={handleChange}
+              <input name="prowlarr_api_key" value={form.prowlarr_api_key} onChange={handleChange}
                 placeholder="••••••••••••" type="password" style={inputStyle} />
             </div>
           </div>
@@ -232,160 +290,115 @@ const [seedbox, setSeedbox] = useState({
 
         <div style={cardStyle}>
           <div style={{ marginBottom: '20px' }}>
-            <div style={{ fontWeight: '700', fontSize: '1rem', marginBottom: '4px' }}>Seedbox Auto-Transfer</div>
-            <div style={{ color: '#b3b3b3', fontSize: '0.85rem' }}>
-              CineStack will watch your seedbox for completed files and transfer them to your media folder automatically.
-            </div>
+            <div style={{ fontWeight: '700', fontSize: '1rem', marginBottom: '4px' }}>Download Agent</div>
+            <div style={{ color: '#b3b3b3', fontSize: '0.85rem' }}>qBittorrent, Transmission, or remote seedbox.</div>
           </div>
-
-          {/* Enable toggle */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-            <label style={{ ...labelStyle, margin: 0 }}>Enable Auto-Transfer</label>
-            <div
-              onClick={() => setSeedbox(s => ({ ...s, enabled: !s.enabled }))}
-              style={{
-                width: '44px', height: '24px', borderRadius: '12px', cursor: 'pointer',
-                background: seedbox.enabled ? '#1d4ed8' : '#333',
-                position: 'relative', transition: 'background 0.2s',
-              }}
-            >
-              <div style={{
-                position: 'absolute', top: '3px',
-                left: seedbox.enabled ? '23px' : '3px',
-                width: '18px', height: '18px', borderRadius: '50%',
-                background: '#fff', transition: 'left 0.2s',
-              }} />
+          <div style={rowStyle}>
+            <div>
+              <label style={labelStyle}>Agent URL</label>
+              <input name="download_agent_url" value={form.download_agent_url} onChange={handleChange}
+                placeholder="http://localhost:8080" style={inputStyle} />
             </div>
-          </div>
-
-          {seedbox.enabled && (
-            <>
-              <div style={{ ...rowStyle, marginBottom: '16px' }}>
-                <div>
-                  <label style={labelStyle}>Seedbox Host</label>
-                  <input style={inputStyle} placeholder="seedbox.example.com"
-                    value={seedbox.host}
-                    onChange={e => setSeedbox(s => ({ ...s, host: e.target.value }))} />
-                </div>
-                <div>
-                  <label style={labelStyle}>Port</label>
-                  <input style={inputStyle} placeholder="22" value={seedbox.port}
-                    onChange={e => setSeedbox(s => ({ ...s, port: e.target.value }))} />
-                </div>
-              </div>
-
-              <div style={{ ...rowStyle, marginBottom: '16px' }}>
-                <div>
-                  <label style={labelStyle}>Username</label>
-                  <input style={inputStyle} placeholder="your username"
-                    value={seedbox.username}
-                    onChange={e => setSeedbox(s => ({ ...s, username: e.target.value }))} />
-                </div>
-                <div>
-                  <label style={labelStyle}>Password</label>
-                  <input style={inputStyle} type="password" placeholder="••••••••"
-                    value={seedbox.password}
-                    onChange={e => setSeedbox(s => ({ ...s, password: e.target.value }))} />
-                </div>
-              </div>
-
-              <div style={{ marginBottom: '16px' }}>
-                <label style={labelStyle}>Remote Path <span style={{ color: '#666', textTransform: 'none', fontWeight: '400' }}>— where completed files land on your seedbox</span></label>
-                <input style={inputStyle} placeholder="/downloads/complete"
-                  value={seedbox.remotePath}
-                  onChange={e => setSeedbox(s => ({ ...s, remotePath: e.target.value }))} />
-              </div>
-
-              <div style={{ marginBottom: '20px' }}>
-                <label style={labelStyle}>Local Destination <span style={{ color: '#666', textTransform: 'none', fontWeight: '400' }}>— Jellyfin watches this folder</span></label>
-                <input style={inputStyle} placeholder="/mnt/media"
-                  value={seedbox.localPath}
-                  onChange={e => setSeedbox(s => ({ ...s, localPath: e.target.value }))} />
-              </div>
-
-              {/* Test connection */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
-                <button
-                  disabled={seedboxTesting || !seedbox.host || !seedbox.username}
-                  onClick={async () => {
-                    setSeedboxTesting(true)
-                    setSeedboxTestResult(null)
-                    try {
-                      const res = await fetch('/api/seedbox/test', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                        body: JSON.stringify(seedbox),
-                      })
-                      setSeedboxTestResult(await res.json())
-                    } catch (err) {
-                      setSeedboxTestResult({ ok: false, error: err.message })
-                    } finally {
-                      setSeedboxTesting(false)
-                    }
-                  }}
-                  style={{
-                    background: '#1a1a1a', color: '#fff', border: '1px solid #2a2a2a',
-                    padding: '10px 20px', borderRadius: '6px', cursor: 'pointer',
-                    fontSize: '0.9rem', fontWeight: '600', opacity: seedboxTesting ? 0.6 : 1,
-                  }}
-                >
-                  {seedboxTesting ? 'Testing…' : 'Test Connection'}
-                </button>
-                {seedboxTestResult && (
-                  <span style={{ fontSize: '0.88rem', fontWeight: '600', color: seedboxTestResult.ok ? '#27ae60' : '#dc2626' }}>
-                    {seedboxTestResult.ok
-                      ? `✓ Connected — ${seedboxTestResult.files} file(s) in remote path`
-                      : `✗ ${seedboxTestResult.error}`}
-                  </span>
-                )}
-              </div>
-            </>
-          )}
-
-          {/* Save seedbox settings */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <button
-              disabled={seedboxSaving}
-              onClick={async () => {
-                setSeedboxSaving(true)
-                setSeedboxSaved(false)
-                try {
-                  await fetch('/api/settings/seedbox', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                    body: JSON.stringify(seedbox),
-                  })
-                  setSeedboxSaved(true)
-                  setTimeout(() => setSeedboxSaved(false), 3000)
-                } catch (err) {
-                  console.error('Failed to save seedbox settings:', err)
-                } finally {
-                  setSeedboxSaving(false)
-                }
-              }}
-              style={{
-                background: '#1d4ed8', color: '#fff', border: 'none',
-                padding: '12px 36px', borderRadius: '6px', cursor: 'pointer',
-                fontSize: '1rem', fontWeight: '700', opacity: seedboxSaving ? 0.6 : 1,
-              }}
-            >
-              {seedboxSaving ? 'Saving…' : seedboxSaved ? '✓ Saved' : 'Save Seedbox Settings'}
-            </button>
+            <div>
+              <label style={labelStyle}>Username</label>
+              <input name="download_agent_username" value={form.download_agent_username} onChange={handleChange}
+                placeholder="admin" style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Password</label>
+              <input name="download_agent_password" value={form.download_agent_password} onChange={handleChange}
+                placeholder="••••••••••••" type="password" style={inputStyle} />
+            </div>
           </div>
         </div>
-              <div style={dividerStyle} />
+
+        <div style={cardStyle}>
+          <div style={{ marginBottom: '20px' }}>
+            <div style={{ fontWeight: '700', fontSize: '1rem', marginBottom: '4px' }}>Jellyfin</div>
+            <div style={{ color: '#b3b3b3', fontSize: '0.85rem' }}>Media server — powers in-browser streaming.</div>
+          </div>
+          <div style={rowStyle}>
+            <div>
+              <label style={labelStyle}>Jellyfin URL</label>
+              <input name="jellyfin_url" value={form.jellyfin_url} onChange={handleChange}
+                placeholder="http://192.168.50.254:8097" style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>API Key</label>
+              <input name="jellyfin_api_key" value={form.jellyfin_api_key} onChange={handleChange}
+                placeholder="••••••••••••" type="password" style={inputStyle} />
+            </div>
+          </div>
+          <div style={{ marginTop: '20px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+            <button
+              onClick={handleScan}
+              disabled={scanStatus === 'scanning'}
+              style={{
+                background: '#1a1a1a', color: '#fff', border: '1px solid #2a2a2a',
+                padding: '10px 20px', borderRadius: '6px', cursor: scanStatus === 'scanning' ? 'default' : 'pointer',
+                fontSize: '0.9rem', fontWeight: '600', opacity: scanStatus === 'scanning' ? 0.7 : 1,
+              }}
+            >
+              {scanStatus === 'scanning' ? 'Syncing...' : 'Sync Library'}
+            </button>
+            {scanStatus === 'done' && <span style={{ color: '#27ae60', fontWeight: '600', fontSize: '0.9rem' }}>✓ Sync complete</span>}
+            {scanStatus === 'error' && <span style={{ color: '#dc2626', fontWeight: '600', fontSize: '0.9rem' }}>✗ Scan failed</span>}
+          </div>
+        </div>
+
+        <div style={dividerStyle} />
 
         {/* ─── Storage ──────────────────────────────────── */}
         <div style={sectionHeaderStyle}>Storage</div>
         <div style={cardStyle}>
           <div style={{ marginBottom: '20px' }}>
-            <div style={{ fontWeight: '700', fontSize: '1rem', marginBottom: '4px' }}>Media Storage Path</div>
-            <div style={{ color: '#b3b3b3', fontSize: '0.85rem' }}>Where your media files are stored on disk.</div>
+            <div style={{ fontWeight: '700', fontSize: '1rem', marginBottom: '4px' }}>Media Storage Paths</div>
+            <div style={{ color: '#b3b3b3', fontSize: '0.85rem' }}>Every folder where your movies and TV shows are stored.</div>
           </div>
-          <div>
-            <label style={labelStyle}>Storage Path</label>
-            <input name="storagePath" value={form.storagePath} onChange={handleChange}
-              placeholder="/mnt/media" style={inputStyle} />
+          {mediaPaths.map((p, i) => (
+            <div key={i} style={{ marginBottom: '10px' }}>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <input
+                  type="text"
+                  placeholder="/mnt/media"
+                  value={p.value}
+                  onChange={e => updateMediaPath(i, e.target.value)}
+                  style={{ ...inputStyle, flex: 1 }}
+                />
+                {mediaPaths.length > 1 && (
+                  <button onClick={() => removeMediaPath(i)} style={{
+                    background: 'none', border: 'none', color: '#666',
+                    fontSize: '20px', cursor: 'pointer', padding: '0 4px', lineHeight: 1,
+                  }}>×</button>
+                )}
+              </div>
+              {p.status === 'ok' && <div style={{ color: '#27ae60', fontSize: '0.82rem', marginTop: '4px' }}>✓ Path found</div>}
+              {p.status === 'err' && <div style={{ color: '#dc2626', fontSize: '0.82rem', marginTop: '4px' }}>✗ {p.error}</div>}
+            </div>
+          ))}
+          <button onClick={addMediaPath} style={{
+            background: 'none', border: 'none', color: '#1d4ed8',
+            fontSize: '14px', cursor: 'pointer', padding: '4px 0', marginBottom: '16px',
+          }}>+ Add another location</button>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            <button
+              disabled={pathsValidating || !mediaPaths.some(p => p.value.trim())}
+              onClick={validateMediaPaths}
+              style={{
+                background: '#1a1a1a', color: '#fff', border: '1px solid #2a2a2a',
+                padding: '10px 20px', borderRadius: '6px', cursor: 'pointer',
+                fontSize: '0.9rem', fontWeight: '600',
+              }}
+            >{pathsValidating ? 'Validating…' : 'Validate Paths'}</button>
+            <button
+              disabled={pathsSaving || !mediaPaths.every(p => !p.value.trim() || p.status === 'ok')}
+              onClick={saveMediaPaths}
+              style={{
+                background: '#1d4ed8', color: '#fff', border: 'none',
+                padding: '10px 20px', borderRadius: '6px', cursor: 'pointer',
+                fontSize: '0.9rem', fontWeight: '700',
+              }}
+            >{pathsSaving ? 'Saving…' : pathsSaved ? '✓ Saved' : 'Save Paths'}</button>
           </div>
         </div>
 
@@ -417,6 +430,37 @@ const [seedbox, setSeedbox] = useState({
             </div>
           </div>
         </div>
+        <div style={{ marginTop: '12px' }} />
+        <div style={cardStyle}>
+          <div style={{ marginBottom: '20px' }}>
+            <div style={{ fontWeight: '700', fontSize: '1rem', marginBottom: '4px' }}>Quality Preference</div>
+            <div style={{ color: '#b3b3b3', fontSize: '0.85rem' }}>Your default streaming quality. Applied per user.</div>
+          </div>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+            {['auto', '1080p', '720p', '480p'].map(q => (
+              <button key={q} onClick={async () => {
+                setQuality(q)
+                setQualitySaved(false)
+                try {
+                  await fetch(API_BASE + '/api/auth/quality', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ quality_preference: q }),
+                  })
+                  setQualitySaved(true)
+                  setTimeout(() => setQualitySaved(false), 2000)
+                } catch {}
+              }} style={{
+                background: quality === q ? '#1d4ed8' : '#111',
+                color: quality === q ? '#fff' : '#aaa',
+                border: '1px solid', borderColor: quality === q ? '#1d4ed8' : '#2a2a2a',
+                padding: '8px 20px', borderRadius: '6px', cursor: 'pointer',
+                fontSize: '0.9rem', fontWeight: '600', textTransform: 'uppercase',
+              }}>{q}</button>
+            ))}
+          </div>
+          {qualitySaved && <div style={{ color: '#27ae60', fontWeight: '600', fontSize: '0.9rem', marginTop: '12px' }}>✓ Saved</div>}
+        </div>
 
         <div style={dividerStyle} />
 
@@ -443,6 +487,99 @@ const [seedbox, setSeedbox] = useState({
               <div style={{ fontSize: '0.8rem', color: '#666' }}>For the brave.</div>
             </div>
           </div>
+        </div>
+
+        <div style={dividerStyle} />
+
+        {/* ─── Notifications ───────────────────────────── */}
+        <div style={dividerStyle} />
+        <div style={sectionHeaderStyle}>Notifications</div>
+        <div style={cardStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <div style={{ fontWeight: '700', fontSize: '1rem', marginBottom: '4px' }}>Push Notifications</div>
+              <div style={{ color: '#b3b3b3', fontSize: '0.85rem' }}>Get notified when downloads complete or requests are updated.</div>
+            </div>
+            <div
+              onClick={handlePushToggle}
+              style={{
+                width: '48px', height: '26px', borderRadius: '13px', cursor: pushLoading ? 'default' : 'pointer',
+                background: pushEnabled ? '#1d4ed8' : '#2a2a2a', position: 'relative', transition: 'background 0.2s',
+                flexShrink: 0, opacity: pushLoading ? 0.6 : 1,
+              }}
+            >
+              <div style={{
+                position: 'absolute', top: '3px', left: pushEnabled ? '25px' : '3px',
+                width: '20px', height: '20px', borderRadius: '50%', background: '#fff',
+                transition: 'left 0.2s',
+              }} />
+            </div>
+          </div>
+        </div>
+
+        {/* ─── CineStack Pro ──────────────────────────── */}
+        <div style={sectionHeaderStyle}>CineStack Pro</div>
+        <div style={cardStyle}>
+          {form.pro_enabled ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#27ae60', flexShrink: 0 }} />
+              <div>
+                <div style={{ fontWeight: '700', fontSize: '1rem' }}>Pro Active</div>
+                <div style={{ color: '#b3b3b3', fontSize: '0.85rem', marginTop: '2px' }}>All Pro features are unlocked.</div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ fontWeight: '700', fontSize: '1rem', marginBottom: '4px' }}>Activate CineStack Pro</div>
+                <div style={{ color: '#b3b3b3', fontSize: '0.85rem' }}>Enter your license key to unlock Pro features. Keys are available at cinestack.app.</div>
+              </div>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                <input
+                  value={proKey}
+                  onChange={e => setProKey(e.target.value)}
+                  placeholder="CINE-XXXX-XXXX-XXXX"
+                  style={{ ...inputStyle, flex: 1, fontFamily: 'monospace', letterSpacing: '1px' }}
+                />
+                <button
+                  onClick={handleActivatePro}
+                  disabled={proActivating}
+                  style={{ background: '#1d4ed8', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: '700', whiteSpace: 'nowrap' }}
+                >
+                  {proActivating ? 'Activating...' : 'Activate'}
+                </button>
+              </div>
+              {proError && <div style={{ color: '#dc2626', fontSize: '0.85rem', marginTop: '8px' }}>{proError}</div>}
+              {proActivated && <div style={{ color: '#27ae60', fontSize: '0.85rem', marginTop: '8px' }}>✓ Pro activated</div>}
+            </>
+          )}
+        </div>
+
+        <div style={dividerStyle} />
+
+        {/* ─── Users (Pro-gated) ───────────────────────── */}
+        <div style={{ ...sectionHeaderStyle, display: 'flex', alignItems: 'center', gap: '8px' }}>
+          Users
+          {!form.pro_enabled && (
+            <span style={{ fontSize: '0.65rem', background: '#1d4ed822', color: '#1d4ed8', border: '1px solid #1d4ed855', borderRadius: '4px', padding: '1px 6px', letterSpacing: '0.5px' }}>PRO</span>
+          )}
+        </div>
+        <div style={{ ...cardStyle, opacity: form.pro_enabled ? 1 : 0.45, pointerEvents: form.pro_enabled ? 'auto' : 'none', position: 'relative' }}>
+          {!form.pro_enabled && (
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '1.5rem', marginBottom: '8px' }}>🔒</div>
+                <div style={{ fontWeight: '600', color: '#b3b3b3' }}>Requires CineStack Pro</div>
+              </div>
+            </div>
+          )}
+          <div style={{ marginBottom: '12px' }}>
+            <div style={{ fontWeight: '700', fontSize: '1rem', marginBottom: '4px' }}>User Accounts</div>
+            <div style={{ color: '#b3b3b3', fontSize: '0.85rem' }}>Manage who has access to your CineStack. Full user management is in the Admin dashboard.</div>
+          </div>
+          <a href="/app/admin" style={{ display: 'inline-block', background: '#1d4ed8', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: '700', textDecoration: 'none' }}>
+            Open Admin Dashboard →
+          </a>
         </div>
 
         <div style={dividerStyle} />

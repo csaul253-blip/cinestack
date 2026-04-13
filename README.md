@@ -32,18 +32,18 @@ CineStack owns the entire UI and user experience. Three engines run silently in 
 
 ### Single command install
 
-\`\`\`bash
+```bash
 docker run -d --name cinestack -p 80:80 \
   -v cinestack-data:/var/lib/postgresql/data \
   -v /mnt/media:/mnt/media \
   ghcr.io/homesoftco/cinestack:latest
-\`\`\`
+```
 
-Replace /mnt/media with the path to your media folder. Add additional -v flags for any other media locations.
+Replace `/mnt/media` with the path to your media folder. Add additional `-v` flags for any other media locations.
 
 ### Setup wizard
 
-On first run, navigate to http://your-server-ip and the setup wizard will guide you through:
+On first run, navigate to `http://your-server-ip` and the setup wizard will guide you through:
 
 1. Creating your admin account
 2. Setting your media storage paths
@@ -57,20 +57,36 @@ All credentials are stored in the database — nothing is hardcoded.
 
 ## Features
 
+### Core
 - **Movies & TV** — your Jellyfin library with a Netflix-quality browsing UI
 - **Requests** — search the full TMDB catalogue, request movies or individual TV seasons
-- **Downloads** — live progress, speed, and ETA from qBittorrent, polled every 10 seconds
-- **Player** — stream directly from Jellyfin with subtitle support
-- **Settings** — manage all integrations from one place, values pre-populate from DB
+- **Downloads** — live progress, speed, and ETA from qBittorrent with tag-based torrent matching
+- **Player** — HLS streaming from Jellyfin with SRT subtitle support and resume playback
+- **Settings** — manage all integrations from one place
+
+### Multi-User
+- **User accounts** — admin and standard roles with scoped JWT authentication
+- **Admin dashboard** — manage users, approve/deny requests, configure auto-accept
+- **Per-user features** — continue watching, personal watchlists, PIN lock, parental controls, quality preferences
+
+### Mobile
+- **PWA** — installable progressive web app with service worker and mobile-optimized UI
+- **iOS app** — native Capacitor build with persistent auth, safe-area support, and HLS playback
+- **Push notifications** — VAPID-based notifications for download completion and request updates
+
+### Subtitles
+- **SRT scanner** — automatically detects subtitle files alongside media
+- **In-player selector** — choose subtitles during playback with live SRT-to-VTT conversion
 
 ---
 
 ## Tech Stack
 
-- **Frontend:** React + Vite, react-router-dom, Axios
+- **Frontend:** React + Vite, react-router-dom, Axios, hls.js
 - **Backend:** Node.js + Express, PostgreSQL 16, JWT auth (bcryptjs + jsonwebtoken)
 - **Container:** Ubuntu 24.04, Nginx, supervisord
-- **Metadata:** TMDB API (requests flow only — library display uses Jellyfin)
+- **Metadata:** TMDB API
+- **Mobile:** Capacitor (iOS), @capacitor/preferences for persistent storage
 
 ---
 

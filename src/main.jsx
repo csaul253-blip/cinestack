@@ -7,6 +7,12 @@ import App from './App.jsx'
 const savedTheme = localStorage.getItem('cinestack_theme')
 if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme)
 
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
+
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <App />

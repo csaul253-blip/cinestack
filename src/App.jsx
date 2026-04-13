@@ -1,3 +1,4 @@
+import API_BASE from "./api";
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { useState, useEffect } from 'react';
@@ -11,8 +12,10 @@ import Settings from './pages/Settings';
 import Profile from './pages/Profile';
 import Login from './pages/Login';
 import Landing from './pages/Landing';
-import Demo from './pages/Demo';
 import Setup from './pages/Setup';
+import Detail from './pages/Detail';
+import Watchlist from './pages/Watchlist';
+import Admin from './pages/Admin';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -21,11 +24,17 @@ function ProtectedRoute({ children }) {
   return children;
 }
 
+function RootRedirect() {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  return user ? <Navigate to="/app" replace /> : <Navigate to="/login" replace />;
+}
+
 function AppRoutes() {
   const [setupComplete, setSetupComplete] = useState(null); // null = loading
 
   useEffect(() => {
-    fetch('/api/setup/status')
+    fetch(API_BASE + '/api/setup/status')
       .then(r => r.json())
       .then(d => setSetupComplete(d.complete))
       .catch(() => setSetupComplete(true)); // fail open — don't block the app
@@ -45,9 +54,8 @@ function AppRoutes() {
 
   return (
     <Routes>
-      <Route path="/" element={<Landing />} />
+      <Route path="/" element={<RootRedirect />} />
       <Route path="/login" element={<Login />} />
-      <Route path="/demo" element={<Demo />} />
       <Route path="/setup" element={<Navigate to="/app" replace />} />
       <Route path="/app/*" element={
         <ProtectedRoute>
@@ -61,6 +69,9 @@ function AppRoutes() {
               <Route path="/downloads" element={<Downloads />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/profile" element={<Profile />} />
+              <Route path="/detail/:type/:id" element={<Detail />} />
+              <Route path="/watchlist" element={<Watchlist />} />
+                <Route path="/admin" element={<Admin />} />
             </Routes>
           </div>
         </ProtectedRoute>

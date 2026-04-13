@@ -1,281 +1,153 @@
-import { useState } from 'react'
-import { useTMDB, getPosterUrl } from '../hooks/useTMDB'
+import API_BASE from "../api";
+import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 
-const BACKDROP_BASE = 'https://image.tmdb.org/t/p/original'
-const POSTER_BASE = 'https://image.tmdb.org/t/p/w342'
+const TMDB_IMG = (path) => path ? `https://image.tmdb.org/t/p/w300${path}` : null
 
-async function fetchBackdrop(showId) {
-  const res = await fetch(`/api/tmdb/tv/${showId}/images`, {
-  })
-  const data = await res.json()
-  const backdrops = data.backdrops || []
-  const pool = backdrops.filter(b => b.iso_639_1 === null || b.iso_639_1 === 'en')
-  if (pool.length === 0) return backdrops[0]?.file_path || null
-  return pool[Math.floor(Math.random() * pool.length)].file_path
+const SORT_OPTIONS = [
+  { value: 'year-desc',  label: 'Year — newest first' },
+  { value: 'year-asc',   label: 'Year — oldest first' },
+  { value: 'title-asc',  label: 'Title A → Z' },
+  { value: 'title-desc', label: 'Title Z → A' },
+]
+
+function sortShows(arr, sortBy) {
+  const a = [...arr]
+  if (sortBy === 'year-desc')  return a.sort((x,y) => (y.year||'').localeCompare(x.year||''))
+  if (sortBy === 'year-asc')   return a.sort((x,y) => (x.year||'').localeCompare(y.year||''))
+  if (sortBy === 'title-asc')  return a.sort((x,y) => x.title.localeCompare(y.title))
+  if (sortBy === 'title-desc') return a.sort((x,y) => y.title.localeCompare(x.title))
+  return a
+}
+
+function SkeletonGrid() {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '16px' }}>
+      {Array.from({ length: 20 }).map((_, i) => (
+        <div key={i} className="skeleton-card">
+          <div className="skeleton skeleton-poster" />
+          <div style={{ padding: '8px' }}>
+            <div className="skeleton skeleton-line" style={{ width: '80%' }} />
+            <div className="skeleton skeleton-line" style={{ width: '45%' }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 export default function TV() {
-  const { data, loading } = useTMDB('/tv/popular')
-  const [selected, setSelected] = useState(null)
-  const [backdrop, setBackdrop] = useState(null)
-  const [requesting, setRequesting] = useState(false)
-  const [requested, setRequested] = useState(false)
+  const [shows, setShows] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [sortBy, setSortBy] = useState('year-desc')
+  const [search, setSearch] = useState('')
+  const navigate = useNavigate()
 
-  const handleSelect = async (show) => {
-    setSelected(show)
-    setRequested(false)
-    setBackdrop(null)
-    const path = await fetchBackdrop(show.id)
-    setBackdrop(path)
-  }
+  useEffect(() => {
+    const token = localStorage.getItem('cinestack_token')
+    fetch(API_BASE + '/api/media/tv?limit=200', { headers: { 'Authorization': `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(data => { setShows(Array.isArray(data) ? data : []); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [])
 
-  const handleRequest = async () => {
-    if (!selected) return
-    setRequesting(true)
-    try {
-      await fetch('/api/requests', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: selected.name,
-          type: 'tv',
-          tmdb_id: selected.id,
-          poster_path: selected.poster_path,
-        })
-      })
-      setRequested(true)
-    } catch (err) {
-      console.error('Request failed:', err)
-    } finally {
-      setRequesting(false)
-    }
-  }
+  if (loading) return (
+    <div style={{ paddingTop: '84px' }}>
+      <div className="section">
+        <div style={{ marginBottom: '24px' }}>
+          <h1 style={{ fontSize: '2rem', fontWeight: '800' }}>TV Shows</h1>
+        </div>
+        <SkeletonGrid />
+      </div>
+    </div>
+  )
 
-  const closeModal = () => {
-    setSelected(null)
-    setBackdrop(null)
-    setRequested(false)
-  }
+  if (!shows.length) return (
+    <div style={{ paddingTop: '84px' }}>
+      <div className="section">
+        <h1 style={{ fontSize: '2rem', fontWeight: '800', marginBottom: '24px' }}>TV Shows</h1>
+        <p style={{ color: '#666' }}>No TV shows found yet. The library scan runs on startup — check back in a few minutes.</p>
+      </div>
+    </div>
+  )
 
-  if (loading) return <div className="loading" style={{ paddingTop: '100px' }}>Loading TV Shows...</div>
+  const sorted = sortShows(shows, sortBy)
+  const q = search.trim().toLowerCase()
+  const filtered = q ? sorted.filter(s => s.title.toLowerCase().includes(q)) : sorted
 
   return (
     <div style={{ paddingTop: '84px' }}>
       <div className="section">
-        <h1 style={{ fontSize: '2rem', fontWeight: '800', marginBottom: '24px' }}>TV Shows</h1>
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
-          gap: '16px',
-        }}>
-          {data?.results?.map(show => (
-            <div key={show.id} className="card" onClick={() => handleSelect(show)}>
-              {show.poster_path ? (
-                <img src={getPosterUrl(show.poster_path)} alt={show.name} loading="lazy" />
-              ) : (
-                <div style={{ aspectRatio: '2/3', background: '#2a2a2a', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', padding: '8px', textAlign: 'center', fontSize: '0.8rem' }}>
-                  {show.name}
-                </div>
-              )}
-              <div className="card-info">
-                <div className="card-title">{show.name}</div>
-                <div className="card-year">{show.first_air_date?.slice(0, 4)}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {selected && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          zIndex: 1000,
-          overflow: 'hidden',
-          background: '#000',
-        }}>
-          {(backdrop || selected.backdrop_path) && (
-            <img
-              src={`${BACKDROP_BASE}${backdrop || selected.backdrop_path}`}
-              alt={selected.name}
-              style={{
-                position: 'absolute',
-                inset: 0,
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-                objectPosition: 'center center',
-              }}
-            />
-          )}
-
-          <div style={{
-            position: 'absolute',
-            inset: 0,
-            background: 'linear-gradient(to right, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.4) 50%, rgba(0,0,0,0.1) 100%)',
-          }} />
-          <div style={{
-            position: 'absolute',
-            inset: 0,
-            background: 'linear-gradient(to top, rgba(0,0,0,0.75) 0%, transparent 45%)',
-          }} />
-
-          <button
-            onClick={closeModal}
-            style={{
-              position: 'absolute',
-              top: '24px',
-              right: '24px',
-              background: 'rgba(0,0,0,0.5)',
-              border: '1px solid rgba(255,255,255,0.3)',
-              color: '#fff',
-              width: '40px',
-              height: '40px',
-              borderRadius: '50%',
-              cursor: 'pointer',
-              fontSize: '1.1rem',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              zIndex: 10,
-            }}
-          >✕</button>
-
-          <div style={{
-            position: 'absolute',
-            bottom: 0,
-            left: 0,
-            right: 0,
-            padding: '40px 48px',
-            display: 'flex',
-            gap: '28px',
-            alignItems: 'flex-end',
-          }}>
-            {selected.poster_path && (
-              <img
-                src={`${POSTER_BASE}${selected.poster_path}`}
-                alt={selected.name}
-                style={{
-                  width: '110px',
-                  borderRadius: '8px',
-                  flexShrink: 0,
-                  boxShadow: '0 8px 32px rgba(0,0,0,0.8)',
-                }}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
+            <h1 style={{ fontSize: '2rem', fontWeight: '800' }}>TV Shows</h1>
+            <span style={{ color: '#666', fontSize: '0.9rem' }}>
+              {q ? `${filtered.length} of ${shows.length.toLocaleString()}` : shows.length.toLocaleString()} titles
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <div className="search-bar">
+              <span className="search-bar-icon">⌕</span>
+              <input
+                type="text"
+                placeholder="Search shows..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
               />
-            )}
-
-            <div style={{ maxWidth: '520px' }}>
-              <div style={{
-                display: 'inline-block',
-                background: '#1d4ed8',
-                color: '#fff',
-                fontSize: '0.75rem',
-                fontWeight: '700',
-                padding: '4px 12px',
-                borderRadius: '20px',
-                marginBottom: '12px',
-                letterSpacing: '0.5px',
-                textTransform: 'uppercase',
-              }}>
-                📺 TV Show
-              </div>
-
-              <h1 style={{
-                fontSize: 'clamp(2rem, 5vw, 3.5rem)',
-                fontWeight: '900',
-                lineHeight: '1.05',
-                marginBottom: '10px',
-                textShadow: '0 2px 12px rgba(0,0,0,0.8)',
-                letterSpacing: '-1px',
-                color: '#fff',
-              }}>
-                {selected.name}
-              </h1>
-
-              <div style={{
-                display: 'flex',
-                gap: '16px',
-                marginBottom: '14px',
-                alignItems: 'center',
-                flexWrap: 'wrap',
-              }}>
-                <span style={{ color: '#f5a623', fontWeight: '700', fontSize: '1rem' }}>
-                  ★ {selected.vote_average?.toFixed(1)}
-                </span>
-                <span style={{ color: 'rgba(255,255,255,0.8)', fontSize: '0.95rem' }}>
-                  {selected.first_air_date?.slice(0, 4)}
-                </span>
-              </div>
-
-              <p style={{
-                color: 'rgba(255,255,255,0.9)',
-                fontSize: '0.95rem',
-                lineHeight: '1.6',
-                marginBottom: '28px',
-                display: '-webkit-box',
-                WebkitLineClamp: 3,
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden',
-                textShadow: '0 1px 6px rgba(0,0,0,0.8)',
-              }}>
-                {selected.overview}
-              </p>
-
-              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                {requested ? (
-                  <div style={{
-                    background: '#27ae6022',
-                    color: '#27ae60',
-                    padding: '12px 28px',
-                    borderRadius: '6px',
-                    fontSize: '1rem',
-                    fontWeight: '700',
-                    border: '1px solid #27ae60',
-                  }}>
-                    ✓ Requested
-                  </div>
-                ) : (
-                  <button
-                    onClick={handleRequest}
-                    disabled={requesting}
-                    style={{
-                      background: '#1d4ed8',
-                      color: '#fff',
-                      border: 'none',
-                      padding: '12px 28px',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      fontSize: '1rem',
-                      fontWeight: '700',
-                      opacity: requesting ? 0.7 : 1,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                    }}
-                  >
-                    + Request
-                  </button>
-                )}
-                <button
-                  onClick={closeModal}
-                  style={{
-                    background: 'rgba(255,255,255,0.15)',
-                    color: '#fff',
-                    border: '1px solid rgba(255,255,255,0.3)',
-                    padding: '12px 28px',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    fontSize: '1rem',
-                    fontWeight: '600',
-                  }}
-                >
-                  Close
-                </button>
-              </div>
+              {search && (
+                <button className="search-clear" onClick={() => setSearch('')}>✕</button>
+              )}
             </div>
+            <span style={{ color: '#666', fontSize: '0.85rem' }}>Sort by</span>
+            <select
+              value={sortBy}
+              onChange={e => setSortBy(e.target.value)}
+              style={{ background: '#1a1a1a', border: '1px solid #333', color: '#fff', fontSize: '0.85rem', padding: '7px 12px', borderRadius: '6px', cursor: 'pointer', outline: 'none', minWidth: '180px' }}
+            >
+              {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
           </div>
         </div>
-      )}
+
+        {filtered.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '60px 0', color: '#555' }}>
+            <div style={{ fontSize: '2.5rem', marginBottom: '14px' }}>🔍</div>
+            <p style={{ fontSize: '1rem', marginBottom: '8px' }}>No shows match <strong style={{ color: '#999' }}>"{search}"</strong></p>
+            <button
+              onClick={() => setSearch('')}
+              style={{ marginTop: '12px', background: 'none', border: '1px solid #444', color: '#888', padding: '8px 18px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.85rem' }}
+            >
+              Clear search
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '16px' }}>
+            {filtered.map(show => (
+              <div
+                key={show.id}
+                className="card"
+                onClick={() => navigate(`/app/detail/tv/${show.tmdb_id || show.id}`)}
+              >
+                <div className="card-poster-wrap">
+                  {TMDB_IMG(show.poster_path)
+                    ? <img src={TMDB_IMG(show.poster_path)} alt={show.title} loading="lazy" />
+                    : <div className="card-no-poster">{show.title}</div>
+                  }
+                  <div className="card-gradient" />
+                  {show.year && <div className="card-year-badge">{show.year}</div>}
+                  <div className="card-type-badge">SERIES</div>
+                  <div className="card-play-overlay">
+                    <div className="card-play-btn">▶</div>
+                  </div>
+                </div>
+                <div className="card-info">
+                  <div className="card-title">{show.title}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

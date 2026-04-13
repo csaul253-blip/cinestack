@@ -1,3 +1,4 @@
+import API_BASE from "../api";
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -7,6 +8,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
   const { login } = useAuth();
   const navigate = useNavigate();
 
@@ -15,14 +17,14 @@ export default function Login() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch(API_BASE + '/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, rememberMe }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Login failed');
-      login(data.token, data.user);
+      await login(data.token, data.user);
       navigate('/app');
     } catch (err) {
       setError(err.message);
@@ -60,10 +62,9 @@ export default function Login() {
               Email
             </label>
             <input
-              type="email"
+              type="text"
               value={email}
               onChange={e => setEmail(e.target.value)}
-              required
               style={{
                 width: '100%', padding: '12px', background: '#1a1a1a',
                 border: '1px solid #333', borderRadius: '8px', color: '#fff',
@@ -80,7 +81,6 @@ export default function Login() {
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
-              required
               style={{
                 width: '100%', padding: '12px', background: '#1a1a1a',
                 border: '1px solid #333', borderRadius: '8px', color: '#fff',
@@ -89,6 +89,16 @@ export default function Login() {
             />
           </div>
 
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '24px' }}>
+            <input
+              type="checkbox"
+              id="rememberMe"
+              checked={rememberMe}
+              onChange={e => setRememberMe(e.target.checked)}
+              style={{ width: '18px', height: '18px', accentColor: '#1d4ed8', cursor: 'pointer' }}
+            />
+            <label htmlFor="rememberMe" style={{ color: '#b3b3b3', fontSize: '14px', cursor: 'pointer' }}>Stay logged in</label>
+          </div>
           <button
             type="submit"
             disabled={loading}

@@ -10,7 +10,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/preferences": "^8.0.1",
     "axios": "^1.13.6",
+    "hls.js": "^1.6.15",
+    "mpegts.js": "^1.8.0",
+    "plyr": "^3.8.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.13.1"
